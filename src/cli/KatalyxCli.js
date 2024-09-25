@@ -3,27 +3,46 @@ import urlJoin from "url-join";
 import path from "path";
 import fs from "fs";
 import {DeclaredError} from "../utils/js-util.js";
-import {findMatchingFiles, getFileOps} from "../utils/fs-util.js";
+import {getFileOps} from "../utils/fs-util.js";
+import {findFiles} from "../utils/dir-util.js";
 import Merge from "../utils/Merge.js";
 import {createRpcProxy} from "fullstack-rpc/client";
 
 export default class KatalyxCli {
-	constructor({url}) {
+	constructor({url, cwd, apiKey}) {
+		this.cwd=cwd;
 		this.url=url;
 		if (!this.url)
 			this.url="https://katalyx.io";
 
+		let headers={};
+		if (apiKey)
+			headers["x-api-key"]=apiKey;
+
+		//console.log(this.url);
+
 		this.qql=createQqlClient(urlJoin(url,"admin/_qql"));
 		this.rpc=createRpcProxy({
 			url: urlJoin(url,"rpc"),
-			headers: {
-				"x-api-key": "dummychangeme"
-			}
+			headers: headers
 		});
+
+		this.ignore=[
+			"node_modules",
+			".*",
+			"yarn.lock",
+			"public/*.css",
+			"public/*.js",
+			"upload",
+			"*.db",
+		];
 	}
 
-	async clone(projectId) {
-		let project=await this.qql({oneFrom: "projects", where: {pid: projectId}});
+	async clone({project_id}) {
+		let project=await this.qql({oneFrom: "projects", where: {pid: project_id}});
+		if (!project)
+			throw new DeclaredError("Project not found: "+project_id);
+
 		if (!this.cwd)
 			this.cwd=path.resolve(project.name);
 
@@ -79,27 +98,15 @@ export default class KatalyxCli {
 		return this.projectFiles;
 	}
 
-	// todo! don't search node_modules and stuff...
 	async getFiles(dir) {
 		let files={};
 		//console.log("getting project");
-		let fileNames=await findMatchingFiles(dir,["**"],{fs});
+		let fileNames=await findFiles(dir,{fs, ignore: this.ignore});
 		//console.log("have project files: "+fileNames.length);
 		for (let fileName of fileNames)
 			files[fileName]=await fs.promises.readFile(path.join(dir,fileName),"utf8");
 
 		return files;
-	}
-
-	logChangeSet(changeSet) {
-		for (let fn of changeSet.new)
-			console.log("  A "+fn);
-
-		for (let fn of changeSet.deleted)
-			console.log("  D "+fn);
-
-		for (let fn of changeSet.changed)
-			console.log("  M "+fn);
 	}
 
 	async getMerge() {
@@ -119,22 +126,60 @@ export default class KatalyxCli {
 		return merge;
 	}
 
+	logChangeSet(changeSet) {
+		for (let fn of changeSet.new)
+			console.log("  A "+fn);
+
+		for (let fn of changeSet.deleted)
+			console.log("  D "+fn);
+
+		for (let fn of changeSet.changed)
+			console.log("  M "+fn);
+	}
+
+	printChangeStatus(changeSet, {label, noLabel, long, short}) {
+		if (!changeSet.numTotal) {
+			console.log(noLabel);
+			return;
+		}
+
+		if (short) {
+			let summaryItems=[];
+			if (changeSet.new.length)
+				summaryItems.push(changeSet.new.length+" new")
+
+			if (changeSet.deleted.length)
+				summaryItems.push(changeSet.deleted.length+" deleted")
+
+			if (changeSet.changed.length)
+				summaryItems.push(changeSet.changed.length+" changed")
+
+			console.log(label+" "+summaryItems.join(", ")+".");
+		}
+
+		else {
+			console.log(label);
+		}
+
+		if (long) {
+			this.logChangeSet(changeSet);
+		}
+	}
+
 	async status() {
 		let merge=await this.getMerge();
-		if (merge.isUpToDate())
-			console.log("Up-to-date.");
 
-		let ourChanges=merge.getOurChanges();
-		if (ourChanges.numTotal) {
-			console.log("Local Changes:");
-			this.logChangeSet(ourChanges);
-		}
+		this.printChangeStatus(merge.getTheirChanges(),{
+			label: "Remote Changes:",
+			noLabel: "No Remote Changes.",
+			long: true
+		});
 
-		let theirChanges=merge.getTheirChanges();
-		if (theirChanges.numTotal) {
-			console.log("Remote Changes:");
-			this.logChangeSet(theirChanges);
-		}
+		this.printChangeStatus(merge.getOurChanges(),{
+			label: "Local Changes:",
+			noLabel: "No Local Changes.",
+			long: true
+		});
 	}
 
 	async applyFileOps(baseDir,ops) {
@@ -158,6 +203,12 @@ export default class KatalyxCli {
 		let merge=await this.getMerge();
 		let mergeFiles=merge.merge({resolve});
 
+		this.printChangeStatus(merge.getTheirChanges(),{
+			label: "Pulling Remote Changes:",
+			noLabel: "No Remote Changes.",
+			short: true
+		});
+
 		//console.log(mergeFiles);
 
 		let baseOps=getFileOps(merge.originalFiles,merge.theirFiles);
@@ -174,6 +225,18 @@ export default class KatalyxCli {
 		let merge=await this.getMerge();
 		let mergeFiles=merge.merge({resolve});
 		//console.log(mergeFiles);
+
+		this.printChangeStatus(merge.getTheirChanges(),{
+			label: "Pulling Remote Changes:",
+			noLabel: "No Remote Changes.",
+			short: true
+		});
+
+		this.printChangeStatus(merge.getOurChanges(),{
+			label: "Pushing Local Changes:",
+			noLabel: "No Local Changes.",
+			short: true
+		});
 
 		let remoteOps=getFileOps(merge.theirFiles,mergeFiles);
 		let project=this.getProject();

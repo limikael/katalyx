@@ -1,19 +1,40 @@
 #!/usr/bin/env node
 
-import minimist from "minimist";
 import KatalyxCli from "./KatalyxCli.js";
 import {DeclaredError} from "../utils/js-util.js";
+import yargs from "yargs/yargs";
+import {hideBin} from "yargs/helpers";
 
-let argv=minimist(process.argv.slice(2));
+let yargsConf=yargs(hideBin(process.argv))
+    .option("url",{
+        description: "Alternative server origin url.",
+	    default: "https://katalyx.io"
+    })
+    .option("api-key",{
+        description: "Server api key.",
+    })
+    .option("cwd",{
+        description: "Project directory.",
+    })
+    .command("clone <project_id>","Clone project.")
+    .command("checkout <project_id>",false)
+    .command("status","Show project status.")
+    .command("diff",false)
+    .command("pull","Pull down remote changes, without uploading local.")
+    .command("sync","Sync local and remote changes.")
+    .command("push",false)
+    .alias("c <project_id>","clone")
+    .demandCommand()
+    .strict()
+
+let argv=yargsConf.parse();
 let katalyxCli=new KatalyxCli(argv);
 
 try {
 	switch (argv._[0]) {
 		case "clone":
 		case "checkout":
-			if (argv._.length!=2)
-				throw new DeclaredError("Usage: clone <project_id>");
-			await katalyxCli.clone(argv._[1]);
+			await katalyxCli.clone(argv);
 			break;
 
 		case "diff":

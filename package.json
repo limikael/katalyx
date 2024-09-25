@@ -13,10 +13,11 @@
   "dependencies": {
     "fullstack-rpc": "^1.0.2",
     "minimatch": "^10.0.1",
-    "minimist": "^1.2.8",
     "node-diff3": "^3.1.2",
+    "path-browserify": "^1.0.1",
     "qql": "^1.0.15",
-    "url-join": "^5.0.0"
+    "url-join": "^5.0.0",
+    "yargs": "^17.7.2"
   },
   "devDependencies": {
     "jasmine": "^5.3.0"
