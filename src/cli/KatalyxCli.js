@@ -62,13 +62,15 @@ export default class KatalyxCli {
 		});
 
 		for (let projectFile of projectFiles) {
-			let fn=path.join(this.cwd,projectFile.name);
-			fs.mkdirSync(path.dirname(fn),{recursive: true});
-			fs.writeFileSync(fn,projectFile.content);
+			if (projectFile.content) {
+				let fn=path.join(this.cwd,projectFile.name);
+				fs.mkdirSync(path.dirname(fn),{recursive: true});
+				fs.writeFileSync(fn,projectFile.content);
 
-			fn=path.join(this.cwd,".katalyx/base_revision",projectFile.name);
-			fs.mkdirSync(path.dirname(fn),{recursive: true});
-			fs.writeFileSync(fn,projectFile.content);
+				fn=path.join(this.cwd,".katalyx/base_revision",projectFile.name);
+				fs.mkdirSync(path.dirname(fn),{recursive: true});
+				fs.writeFileSync(fn,projectFile.content);
+			}
 		}
 	}
 
@@ -93,7 +95,8 @@ export default class KatalyxCli {
 
 		this.projectFiles={};
 		for (let projectFileEntry of projectFileEntries)
-			this.projectFiles[projectFileEntry.name]=projectFileEntry.content;
+			if (projectFileEntry.content)
+				this.projectFiles[projectFileEntry.name]=projectFileEntry.content;
 
 		return this.projectFiles;
 	}
