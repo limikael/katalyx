@@ -2,10 +2,11 @@ import {createQqlClient} from "qql";
 import urlJoin from "url-join";
 import path from "path";
 import fs from "fs";
-import {DeclaredError} from "../utils/js-util.js";
-import {getFileOps} from "../utils/fs-util.js";
+import {DeclaredError, arrayUnique} from "../utils/js-util.js";
+import {getFileOps, getFileHash, downloadFile} from "../utils/fs-util.js";
 import {findFiles} from "../utils/dir-util.js";
 import Merge from "../utils/Merge.js";
+import BinMerge from "../utils/BinMerge.js";
 import {createRpcProxy} from "fullstack-rpc/client";
 
 export default class KatalyxCli {
@@ -61,6 +62,7 @@ export default class KatalyxCli {
 			where: {project_id: project.id}
 		});
 
+		let contentFiles={};
 		for (let projectFile of projectFiles) {
 			if (projectFile.content) {
 				let fn=path.join(this.cwd,projectFile.name);
@@ -71,7 +73,23 @@ export default class KatalyxCli {
 				fs.mkdirSync(path.dirname(fn),{recursive: true});
 				fs.writeFileSync(fn,projectFile.content);
 			}
+
+			if (projectFile.file) {
+				let fn=path.join(this.cwd,projectFile.name);
+				fs.mkdirSync(path.dirname(fn),{recursive: true});
+				let url=urlJoin(this.url,"admin/_content",projectFile.file);
+				await downloadFile(url,fn,{fs});
+				let hash=await getFileHash(fn,{fs});
+
+				contentFiles[projectFile.name]={
+					local: hash,
+					remote: projectFile.file
+				}
+			}
 		}
+
+		let contentFilesJsonFn=path.join(this.cwd,".katalyx/content.json");
+		fs.writeFileSync(contentFilesJsonFn,JSON.stringify(contentFiles,null,2));
 	}
 
 	getProject() {
@@ -104,12 +122,55 @@ export default class KatalyxCli {
 	async getFiles(dir) {
 		let files={};
 		//console.log("getting project");
-		let fileNames=await findFiles(dir,{fs, ignore: this.ignore});
+		let fileNames=await findFiles(dir,{fs, ignore: ["public",...this.ignore]});
 		//console.log("have project files: "+fileNames.length);
 		for (let fileName of fileNames)
 			files[fileName]=await fs.promises.readFile(path.join(dir,fileName),"utf8");
 
 		return files;
+	}
+
+	getCwd() {
+		if (this.cwd)
+			return this.cwd;
+
+		return process.cwd();
+	}
+
+	async getFileHashes(dir) {
+		let hashes={};
+		let fileNames=await findFiles(dir,{fs, patterns: "public/**", ignore: this.ignore});
+
+		for (let fileName of fileNames)
+			hashes[fileName]=await getFileHash(path.join(dir,fileName),{fs});
+
+		return hashes;
+	}
+
+	async getProjectHashes() {
+		let project=this.getProject();
+		let projectFileEntries=await this.qql({
+			manyFrom: "project_files",
+			where: {project_id: project.id}
+		});
+
+		let projectHashes={};
+		for (let projectFileEntry of projectFileEntries)
+			if (projectFileEntry.file)
+				projectHashes[projectFileEntry.name]=projectFileEntry.file;
+
+		return projectHashes;
+	}
+
+	async getBinMerge() {
+		let localFiles=await this.getFileHashes(this.getCwd());
+		let remoteFiles=await this.getProjectHashes();
+		let baseFiles=JSON.parse(fs.readFileSync(path.join(this.getCwd(),".katalyx/content.json")));
+		return new BinMerge({
+			localFiles,
+			remoteFiles,
+			baseFiles
+		});
 	}
 
 	async getMerge() {
@@ -171,6 +232,7 @@ export default class KatalyxCli {
 
 	async status() {
 		let merge=await this.getMerge();
+		let binMerge=await this.getBinMerge();
 
 		this.printChangeStatus(merge.getTheirChanges(),{
 			label: "Remote Changes:",
@@ -183,6 +245,8 @@ export default class KatalyxCli {
 			noLabel: "No Local Changes.",
 			long: true
 		});
+
+		console.log(binMerge.getStatusString());
 	}
 
 	async applyFileOps(baseDir,ops) {
@@ -199,18 +263,42 @@ export default class KatalyxCli {
 		}
 	}
 
+	async saveContentHashes() {
+		let localFiles=await this.getFileHashes(this.getCwd());
+		let remoteFiles=await this.getProjectHashes();
+		let content={};
+
+		let allFiles=arrayUnique(Object.keys(localFiles),Object.keys(remoteFiles));
+		for (let fn of allFiles) {
+			content[fn]={};
+			if (localFiles[fn])
+				content[fn].local=localFiles[fn];
+
+			if (remoteFiles[fn])
+				content[fn].remote=remoteFiles[fn];
+		}
+
+		//console.log(content);
+		let contentFn=path.join(this.getCwd(),".katalyx/content.json");
+		await fs.promises.writeFile(contentFn,JSON.stringify(content,null,2));
+	}
+
 	async pull({resolve}) {
 		if (!this.cwd)
 			this.cwd=process.cwd();
 
 		let merge=await this.getMerge();
 		let mergeFiles=merge.merge({resolve});
+		let binMerge=await this.getBinMerge();
+		let binMergeOps=binMerge.getMergeOps({resolve});
 
 		this.printChangeStatus(merge.getTheirChanges(),{
 			label: "Pulling Remote Changes:",
 			noLabel: "No Remote Changes.",
 			short: true
 		});
+
+		console.log(binMerge.getStatusString({resolve}));
 
 		//console.log(mergeFiles);
 
@@ -219,6 +307,39 @@ export default class KatalyxCli {
 
 		let localOps=getFileOps(merge.ourFiles,mergeFiles);
 		await this.applyFileOps(this.cwd,localOps);
+
+		let contentManifestFn=path.join(this.getCwd(),".katalyx/content.json");
+		let contentManifest=JSON.parse(await fs.promises.readFile(contentManifestFn));
+		for (let fn in binMergeOps) {
+			switch (binMergeOps[fn]) {
+				case "upload":
+					break;
+
+				case "download":
+					let contentUrl=urlJoin(this.url,"admin/_content",binMerge.remoteFiles[fn]);
+					let contentFn=path.join(this.getCwd(),fn);
+					await downloadFile(contentUrl,contentFn,{fs});
+					//console.log("Download: "+contentUrl+" -> "+contentFn);
+
+					contentManifest[fn]={
+						local: await getFileHash(contentFn,{fs}),
+						remote: binMerge.remoteFiles[fn],
+					}
+					break;
+
+				case "delete":
+					if (!binMerge.remoteFiles[fn]) {
+						let contentFn=path.join(this.getCwd(),fn);
+						if (fs.existsSync(contentFn))
+							await fs.promises.rm(contentFn);
+
+						delete contentManifest[fn];
+					}
+					break;
+			}
+		}
+
+		await fs.promises.writeFile(contentManifestFn,JSON.stringify(contentManifest,null,2));
 	}
 
 	async sync({resolve}) {
@@ -227,6 +348,9 @@ export default class KatalyxCli {
 
 		let merge=await this.getMerge();
 		let mergeFiles=merge.merge({resolve});
+		let binMerge=await this.getBinMerge();
+		let binMergeOps=binMerge.getMergeOps({resolve});
+
 		//console.log(mergeFiles);
 
 		this.printChangeStatus(merge.getTheirChanges(),{
@@ -241,20 +365,63 @@ export default class KatalyxCli {
 			short: true
 		});
 
+		console.log(binMerge.getStatusString({resolve}));
+
 		let remoteOps=getFileOps(merge.theirFiles,mergeFiles);
 		let project=this.getProject();
 		if (!project.pid)
 			throw new Error("Project id missing");
 
-		await this.rpc.updateProjectFiles({
-			pid: project.pid,
-			files: remoteOps
-		});
+		if (Object.keys(remoteOps).length) {
+			await this.rpc.updateProjectFiles({
+				pid: project.pid,
+				files: remoteOps
+			});
+		}
 
 		let baseOps=getFileOps(merge.originalFiles,mergeFiles);
 		await this.applyFileOps(path.join(this.cwd,".katalyx/base_revision"),baseOps);
 
 		let localOps=getFileOps(merge.ourFiles,mergeFiles);
 		await this.applyFileOps(this.cwd,localOps);
+
+		let contentManifestFn=path.join(this.getCwd(),".katalyx/content.json");
+		let contentManifest=JSON.parse(await fs.promises.readFile(contentManifestFn));
+		for (let fn in binMergeOps) {
+			switch (binMergeOps[fn]) {
+				case "upload":
+					todo: fix here!!!
+					break;
+
+				case "download":
+					let contentUrl=urlJoin(this.url,"admin/_content",binMerge.remoteFiles[fn]);
+					let contentFn=path.join(this.getCwd(),fn);
+					await downloadFile(contentUrl,contentFn,{fs});
+					//console.log("Download: "+contentUrl+" -> "+contentFn);
+
+					contentManifest[fn]={
+						local: await getFileHash(contentFn,{fs}),
+						remote: binMerge.remoteFiles[fn],
+					}
+					break;
+
+				case "delete":
+					let delContentFn=path.join(this.getCwd(),fn);
+					if (fs.existsSync(delContentFn))
+						await fs.promises.rm(delContentFn);
+
+					if (binMerge.remoteFiles[fn]) {
+						await this.rpc.updateProjectFiles({
+							pid: project.pid,
+							files: {[fn]: null}
+						});
+					}
+
+					delete contentManifest[fn];
+					break;
+			}
+		}
+
+		await fs.promises.writeFile(contentManifestFn,JSON.stringify(contentManifest,null,2));
 	}
 }
