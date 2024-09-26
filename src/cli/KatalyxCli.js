@@ -3,11 +3,12 @@ import urlJoin from "url-join";
 import path from "path";
 import fs from "fs";
 import {DeclaredError, arrayUnique} from "../utils/js-util.js";
-import {getFileOps, getFileHash, downloadFile} from "../utils/fs-util.js";
+import {getFileOps, getFileHash, downloadFile, getFileObject} from "../utils/fs-util.js";
 import {findFiles} from "../utils/dir-util.js";
 import Merge from "../utils/Merge.js";
 import BinMerge from "../utils/BinMerge.js";
 import {createRpcProxy} from "fullstack-rpc/client";
+import {QuickminApi} from "quickmin-api";
 
 export default class KatalyxCli {
 	constructor({url, cwd, apiKey}) {
@@ -22,6 +23,10 @@ export default class KatalyxCli {
 
 		//console.log(this.url);
 
+		this.qm=new QuickminApi({
+			url: urlJoin(url,"admin"),
+			headers: headers
+		});
 		this.qql=createQqlClient(urlJoin(url,"admin/_qql"));
 		this.rpc=createRpcProxy({
 			url: urlJoin(url,"rpc"),
@@ -263,26 +268,6 @@ export default class KatalyxCli {
 		}
 	}
 
-	async saveContentHashes() {
-		let localFiles=await this.getFileHashes(this.getCwd());
-		let remoteFiles=await this.getProjectHashes();
-		let content={};
-
-		let allFiles=arrayUnique(Object.keys(localFiles),Object.keys(remoteFiles));
-		for (let fn of allFiles) {
-			content[fn]={};
-			if (localFiles[fn])
-				content[fn].local=localFiles[fn];
-
-			if (remoteFiles[fn])
-				content[fn].remote=remoteFiles[fn];
-		}
-
-		//console.log(content);
-		let contentFn=path.join(this.getCwd(),".katalyx/content.json");
-		await fs.promises.writeFile(contentFn,JSON.stringify(content,null,2));
-	}
-
 	async pull({resolve}) {
 		if (!this.cwd)
 			this.cwd=process.cwd();
@@ -298,7 +283,7 @@ export default class KatalyxCli {
 			short: true
 		});
 
-		console.log(binMerge.getStatusString({resolve}));
+		console.log(binMerge.getStatusString({resolve, includeLocal: false}));
 
 		//console.log(mergeFiles);
 
@@ -313,6 +298,7 @@ export default class KatalyxCli {
 		for (let fn in binMergeOps) {
 			switch (binMergeOps[fn]) {
 				case "upload":
+					// Don't do any uploading when pulling.
 					break;
 
 				case "download":
@@ -390,7 +376,19 @@ export default class KatalyxCli {
 		for (let fn in binMergeOps) {
 			switch (binMergeOps[fn]) {
 				case "upload":
-					todo: fix here!!!
+					let localFn=path.join(this.getCwd(),fn);
+					let remoteFn=await this.qm.uploadFile(await getFileObject(localFn,{fs}));
+					await this.rpc.updateProjectFiles({
+						pid: project.pid,
+						files: {
+							[fn]: {file: remoteFn}
+						}
+					});
+
+					contentManifest[fn]={
+						local: await getFileHash(localFn,{fs}),
+						remote: remoteFn,
+					}
 					break;
 
 				case "download":
@@ -420,8 +418,8 @@ export default class KatalyxCli {
 					delete contentManifest[fn];
 					break;
 			}
-		}
 
-		await fs.promises.writeFile(contentManifestFn,JSON.stringify(contentManifest,null,2));
+			await fs.promises.writeFile(contentManifestFn,JSON.stringify(contentManifest,null,2));
+		}
 	}
 }

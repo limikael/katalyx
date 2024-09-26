@@ -225,6 +225,13 @@ qql@^1.0.16:
     sqlstring "^2.3.3"
     sqlstring-sqlite "^0.1.1"
 
+quickmin-api@^1.0.7:
+  version "1.0.7"
+  resolved "https://registry.yarnpkg.com/quickmin-api/-/quickmin-api-1.0.7.tgz#c49af4113438d78c7027f935f66f087768601396"
+  integrity sha512-m+3U+EvxpjZH7UC930+QIO5eE2aRdEdck0OKymBybC/3UwLdXnfWVHm6Ie7v3gweeY2e7tFmweSO5+N6el5oWg==
+  dependencies:
+    url-join "^5.0.0"
+
 require-directory@^2.1.1:
   version "2.1.1"
   resolved "https://registry.yarnpkg.com/require-directory/-/require-directory-2.1.1.tgz#8c64ad5fd30dab1c976e2344ffe7f792a6a6df42"

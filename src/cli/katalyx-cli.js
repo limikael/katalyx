@@ -16,6 +16,9 @@ let yargsConf=yargs(hideBin(process.argv))
     .option("cwd",{
         description: "Project directory.",
     })
+    .option("resolve",{
+    	description: "If case of conflict, resolve with 'ours' or 'theirs'."
+    })
     .command("clone <project_id>","Clone project.")
     .command("checkout <project_id>",false)
     .command("status","Show project status.")

@@ -7,10 +7,13 @@ export default class BinMerge {
 		this.baseFiles=baseFiles;
 	}
 
-	getStatusString({resolve}={}) {
+	getStatusString({resolve, includeLocal}={}) {
+		if (includeLocal===undefined)
+			includeLocal=true;
+
 		let opCount=this.getMergeOpCount({resolve});
 		let summaryItems=[];
-		if (opCount.upload)
+		if (opCount.upload && includeLocal)
 			summaryItems.push(opCount.upload+" upload")
 
 		if (opCount.download)

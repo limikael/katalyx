@@ -16,6 +16,13 @@ export function getFileOps(current, wanted) {
 	return res;
 }
 
+export async function getFileObject(fn,{fs}) {
+	let name=path.basename(fn);
+	let data=await fs.promises.readFile(fn);
+	let file=new File([data],name);
+	return file;
+}
+
 export async function getFileHash(fn,{fs}) {
 	let hashBuffer=await crypto.subtle.digest("SHA-256",await fs.promises.readFile(fn));
 
