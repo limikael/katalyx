@@ -62,6 +62,9 @@ export default class KatalyxCli {
 		let projectJsonFn=path.join(this.cwd,".katalyx/project.json");
 		fs.writeFileSync(projectJsonFn,JSON.stringify(project,null,2));
 
+		let gitIgnoreFn=path.join(this.cwd,".gitignore");
+		fs.writeFileSync(gitIgnoreFn,`.katalyx\nnode_modules\nquickmin.db\n`);
+
 		let projectFiles=await this.qql({
 			manyFrom: "project_files",
 			where: {project_id: project.id}
