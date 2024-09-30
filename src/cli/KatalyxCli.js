@@ -39,6 +39,7 @@ export default class KatalyxCli {
 			"yarn.lock",
 			"public/*.css",
 			"public/*.js",
+			"katnip.local.json",
 			"upload",
 			"*.db",
 		];
