@@ -50,8 +50,11 @@ export default class LocalFileTreeValue {
 			currentTree[fn]=this.fs.readFileSync(fullFn,"utf8");
 		}
 
-		for (let fn in this.special)
-			currentTree[fn]=this.special[fn].getter();
+		for (let fn in this.special) {
+			let specialValue=this.special[fn].getter();
+			if (specialValue)
+				currentTree[fn]=specialValue;
+		}
 
 		return currentTree;
 	}
