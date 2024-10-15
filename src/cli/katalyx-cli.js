@@ -10,6 +10,10 @@ let yargsConf=yargs(hideBin(process.argv))
         description: "Alternative server origin url.",
 	    default: "https://katalyx.io"
     })
+    .option("mqtt",{
+        description: "Push changes to MQTT.",
+	    default: true
+    })
     /*.option("api-key",{
         description: "Server api key.",
     })*/
@@ -20,6 +24,7 @@ let yargsConf=yargs(hideBin(process.argv))
     	description: "If case of conflict, resolve with 'local' or 'remote'."
     })
     .command("login","Login and store credentials.")
+    .command("ls","List projects.")
     .command("whoami","Show current login information.")
     .command("clone <project_id>","Clone project.")
     .command("checkout <project_id>",false)
@@ -62,6 +67,10 @@ try {
 
 		case "login":
 			await katalyxCli.login();
+			break;
+
+		case "ls":
+			await katalyxCli.ls();
 			break;
 
 		default:

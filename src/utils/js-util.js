@@ -5,6 +5,18 @@ export class DeclaredError extends Error {
 	}
 }
 
+export function arraySortBy(array, fieldname) {
+	array.sort((a,b)=>{
+		if (a[fieldname]<b[fieldname])
+			return -1;
+
+		if (a[fieldname]>b[fieldname])
+			return 1;
+
+		return 0;
+  	});
+}
+
 export function arrayify(a) {
 	if (Array.isArray(a))
 		return a;
@@ -83,7 +95,10 @@ export class ResolvablePromise extends Promise {
 	}
 }
 
-export function objectEq(a,b) {
+export function objectEq(a, b, {compareKeyOrder}={}) {
+	if (compareKeyOrder===undefined)
+		compareKeyOrder=true;
+
 	if (Array.isArray(a) && Array.isArray(b)) {
 		if (a.length!=b.length)
 			return false;
@@ -95,8 +110,10 @@ export function objectEq(a,b) {
 		let aKeys=Object.keys(a);
 		let bKeys=Object.keys(b);
 
-		aKeys.sort();
-		bKeys.sort();
+		if (!compareKeyOrder) {
+			aKeys.sort();
+			bKeys.sort();
+		}
 
 		if (!objectEq(aKeys,bKeys))
 			return false;

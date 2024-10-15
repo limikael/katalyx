@@ -1,26 +1,30 @@
 import {createQqlClient} from "qql";
 import urlJoin from "url-join";
-import path from "path";
-import fs from "fs";
-import {DeclaredError, arrayUnique, objectEq, ResolvablePromise} from "../utils/js-util.js";
+import {DeclaredError, arrayUnique, objectEq, ResolvablePromise, arraySortBy} from "../utils/js-util.js";
 import {findFiles} from "../utils/dir-util.js";
 import {createRpcProxy} from "fullstack-rpc/client";
 import {QuickminApi} from "quickmin-api";
 import {createNodeRequestListener} from "serve-fetch";
+import {getUserPrefsDir} from "../utils/node-util.js";
+import {getFileHash, downloadFile} from "../utils/fs-util.js";
+import {LocalFileTreeValue, AncestorFileValue, RemoteMutatorValue, SyncManager,
+		SubscribeMqtt, MergeFiles, diffFileTree} from "../sync/index.js";
 import http from "http";
 import util from "util";
 import open from "open";
-import {getUserPrefsDir} from "../utils/node-util.js";
-import {LocalFileTreeValue, AncestorFileValue, RemoteMutatorValue, SyncManager,
-		SubscribeMqtt, MergeFiles, diffFileTree} from "../sync/index.js";
+import path from "path";
+import fs from "fs";
+import {getContentFileAction} from "./katalyx-cli-util.js";
 
 export default class KatalyxCli {
-	constructor({url, cwd, apiKey}) {
+	constructor({url, cwd, apiKey, mqtt}) {
 		this.fs=fs;
 		this.cwd=cwd;
 		this.url=url;
 		if (!this.url)
 			this.url="https://katalyx.io";
+
+		this.mqtt=mqtt;
 
 		let headers={};
 		if (fs.existsSync(this.getCredentialsPathname())) {
@@ -57,6 +61,20 @@ export default class KatalyxCli {
 
 	getCredentialsPathname() {
 		return path.join(getUserPrefsDir(),".katalyx-credentials.json");
+	}
+
+	async ls() {
+		let projects=await this.rpc.listProjects({
+			ownership: "all",
+			unselect: ["content"]
+		});
+
+		for (let project of projects) {
+			console.log(
+				project.pid.padEnd(25)+
+				project.name
+			);
+		}
 	}
 
 	async whoami() {
@@ -123,7 +141,55 @@ export default class KatalyxCli {
 		fs.writeFileSync(path.join(this.cwd,".katalyx/project.json"),JSON.stringify(this.project,null,2));
 
 		//console.log(this.project);
-		await this.initSyncManager({init: true, sync: true});
+		await this.initSyncManager({init: true, sync: true, enablePush: false});
+
+		let contentFiles=await this.getContentFiles();
+		for (let contentFile of contentFiles)
+			await this.processContentFile(contentFile);
+
+		await this.saveContentFiles(contentFiles);
+
+
+		//let contentFiles=await this.getContentFiles();
+		//console.log(contentFiles);
+
+
+		//await this.syncContent();
+	}
+
+	async processContentFile(contentFile) {
+		//console.log("process: ",contentFile);
+		let fn=path.join(this.cwd,"public",contentFile.name);
+
+		switch (getContentFileAction(contentFile)) {
+			case "download":
+				console.log("Download: "+contentFile.name);
+				if (!fs.existsSync(path.join(this.cwd,"public")))
+					fs.mkdirSync(path.join(this.cwd,"public"));
+
+				let url=urlJoin(this.url,"admin/_content",contentFile.remoteFile);
+				await downloadFile(url,fn,{fs});
+
+				contentFile.syncFile=contentFile.remoteFile;
+				contentFile.file=contentFile.remoteFile;
+				contentFile.syncHash=await getFileHash(fn,{fs});
+				return contentFile;
+				break;
+
+			case "upload":
+				
+				break;
+
+			case "delete":
+				console.log("Delete: "+contentFile.name);
+				if (fs.existsSync(fn))
+					fs.rmSync(fn);
+
+				return;
+				break;
+		}
+
+		return contentFile;
 	}
 
 	async pull({resolve}) {
@@ -133,6 +199,21 @@ export default class KatalyxCli {
 		let projectJsonFn=path.join(this.cwd,".katalyx/project.json");
 		this.project=JSON.parse(fs.readFileSync(projectJsonFn));
 		await this.initSyncManager({init: false, sync: true, enablePush: false});
+
+		let contentFiles=await this.getContentFiles();
+		let newContentFiles=[];
+		for (let contentFile of contentFiles) {
+			let action=getContentFileAction(contentFile)
+			//console.log("action: "+action);
+			if (["download","delete"].includes(action))
+				contentFile=await this.processContentFile(contentFile);
+
+			if (contentFile)
+				newContentFiles.push(contentFile);
+		}
+
+		await this.saveContentFiles(newContentFiles);
+
 	}
 
 	async sync({resolve}) {
@@ -164,19 +245,25 @@ export default class KatalyxCli {
 		]);
 
 		let changes=[];
-		for (let changedName of changedNames)
-			changes.push({
-				name: changedName,
-				local: localChanges[changedName],
-				remote: remoteChanges[changedName]
-			});
+		for (let changedName of changedNames) {
+			if (changedName!=".content_manifest.json") {
+				changes.push({
+					name: changedName,
+					local: localChanges[changedName],
+					remote: remoteChanges[changedName]
+				});
+			}
+		}
 
-		if (!changes.length) {
+		let contentFiles=await this.getContentFiles();
+		let contentFileChanges=contentFiles.filter(c=>getContentFileAction(c));
+
+		if (!changes.length && !contentFileChanges.length) {
 			console.log("Up-to-date.");
 			return;
 		}
 
-		console.log("Changes (local+remote):")
+		console.log("Changes:")
 		for (let change of changes) {
 			let changeChar={
 				new: "N",
@@ -194,18 +281,13 @@ export default class KatalyxCli {
 			);
 		}
 
+		for (let contentFile of contentFileChanges) {
+			let action=getContentFileAction(contentFile);
+
+			console.log("  "+action.padEnd(16)+contentFile.name);
+		}
+
 		//console.log(changes);
-	}
-
-	logChangeSet(changeSet) {
-		for (let fn of changeSet.new)
-			console.log("  A "+fn);
-
-		for (let fn of changeSet.deleted)
-			console.log("  D "+fn);
-
-		for (let fn of changeSet.changed)
-			console.log("  M "+fn);
 	}
 
 	getRemoteValue=async ()=>{
@@ -234,13 +316,21 @@ export default class KatalyxCli {
 	}
 
 	async initSyncManager({init, sync, enablePush}) {
-		let mqttCredentals=await this.rpc.getMqttCredentials();
-		//console.log("mqtt ",mqttCredentals);
-
 		let local=new LocalFileTreeValue({
 			fs: this.fs,
 			cwd: this.cwd,
 			ignore: ["node_modules",".target",".tmp",".katalyx","**/*.js.bundle","public","upload"]
+		});
+
+		let contentManifestPath=path.join(this.cwd,".katalyx/content_manifest.json");
+		local.addSpecial(".content_manifest.json",{
+			getter: ()=>{
+				if (fs.existsSync(contentManifestPath))
+					return fs.readFileSync(contentManifestPath,"utf8");
+			},
+			setter: (value)=>{
+				fs.writeFileSync(contentManifestPath,value)
+			}
 		});
 
 		let ancestor=new AncestorFileValue({
@@ -254,21 +344,26 @@ export default class KatalyxCli {
 			set: this.setRemoteValue,
 		});
 
-		let subscribe=new SubscribeMqtt({
-			...mqttCredentals,
-			topic: this.project.pid
-		});
 		let mergeFiles=new MergeFiles({resolve: "remote"});
 
-		this.syncManager=new SyncManager({
+		let syncManagerOptions={
 			local, 
 			ancestor, 
 			remote, 
-			subscribe, 
 			merge: mergeFiles.merge,
-			compare: objectEq,
+			compare: (a,b)=>objectEq(a,b,{compareKeyOrder: false}),
 			enablePush: enablePush,
-		});
+		}
+
+		if (this.mqtt) {
+			let mqttCredentals=await this.rpc.getMqttCredentials();
+			syncManagerOptions.subscribe=new SubscribeMqtt({
+				...mqttCredentals,
+				topic: this.project.pid
+			});
+		}
+
+		this.syncManager=new SyncManager(syncManagerOptions);
 		await this.syncManager.init({init, sync});
 
 		/*this.syncManager.addEventListener("syncStatusChange",()=>{
@@ -279,5 +374,89 @@ export default class KatalyxCli {
 	async close() {
 		if (this.syncManager)
 			await this.syncManager.close();
+	}
+
+	async saveContentFiles(contentFiles) {
+		let contentManifest=[];
+		let contentState=[];
+
+		for (let contentFile of contentFiles) {
+			contentManifest.push({
+				name: contentFile.name,
+				file: contentFile.file,
+				size: contentFile.size
+			});
+
+			contentState.push({
+				name: contentFile.name,
+				syncFile: contentFile.syncFile,
+				syncHash: contentFile.syncHash
+			});
+		}
+
+		let contentStatePath=path.join(this.cwd,".katalyx/content_state.json");
+		fs.writeFileSync(contentStatePath,JSON.stringify(contentState,null,2));
+
+		arraySortBy(contentManifest,"name");
+		let contentManifestPath=path.join(this.cwd,".katalyx/content_manifest.json");
+		let currentContentManifest=JSON.parse(fs.readFileSync(contentManifestPath));
+		arraySortBy(currentContentManifest,"name");
+		if (!objectEq(contentManifest,currentContentManifest,{compareKeyOrder: false}))
+			fs.writeFileSync(contentManifestPath,JSON.stringify(contentManifest,null,2));
+	}
+
+	async getContentFiles() {
+		let contentFiles={};
+
+		let publicPath=path.join(this.cwd,"public");
+		if (fs.existsSync(publicPath)) {
+			for (let localName of fs.readdirSync(publicPath)) {
+				if (!contentFiles[localName])
+					contentFiles[localName]={name: localName};
+
+				let fn=path.join(this.cwd,"public",localName);
+				contentFiles[localName].hash=await getFileHash(fn,{fs});
+			}
+		}
+
+		let contentStatePath=path.join(this.cwd,".katalyx/content_state.json");
+		if (fs.existsSync(contentStatePath)) {
+			for (let stateEntry of JSON.parse(fs.readFileSync(contentStatePath))) {
+				if (!contentFiles[stateEntry.name])
+					contentFiles[stateEntry.name]={name: stateEntry.name};
+
+				contentFiles[stateEntry.name]={
+					...contentFiles[stateEntry.name],
+					...stateEntry
+				};
+			}
+		}
+
+		let contentManifestPath=path.join(this.cwd,".katalyx/content_manifest.json");
+		if (fs.existsSync(contentManifestPath)) {
+			for (let manifestEntry of JSON.parse(fs.readFileSync(contentManifestPath))) {
+				if (!contentFiles[manifestEntry.name])
+					contentFiles[manifestEntry.name]={name: manifestEntry.name};
+
+				contentFiles[manifestEntry.name]={
+					...contentFiles[manifestEntry.name],
+					...manifestEntry
+				};
+			}
+		}
+
+		let remoteManifestJson=this.syncManager.remote.getValue()[".content_manifest.json"];
+		let remoteManifest=JSON.parse(remoteManifestJson);
+		for (let manifestEntry of remoteManifest) {
+			if (!contentFiles[manifestEntry.name])
+				contentFiles[manifestEntry.name]={name: manifestEntry.name};
+
+			contentFiles[manifestEntry.name]={
+				...contentFiles[manifestEntry.name],
+				remoteFile: manifestEntry.file
+			};
+		}
+
+		return Object.values(contentFiles);
 	}
 }
