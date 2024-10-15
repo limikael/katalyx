@@ -6,7 +6,7 @@ import {createRpcProxy} from "fullstack-rpc/client";
 import {QuickminApi} from "quickmin-api";
 import {createNodeRequestListener} from "serve-fetch";
 import {getUserPrefsDir} from "../utils/node-util.js";
-import {getFileHash, downloadFile} from "../utils/fs-util.js";
+import {getFileHash, downloadFile, getFileObject} from "../utils/fs-util.js";
 import {LocalFileTreeValue, AncestorFileValue, RemoteMutatorValue, SyncManager,
 		SubscribeMqtt, MergeFiles, diffFileTree} from "../sync/index.js";
 import http from "http";
@@ -143,53 +143,7 @@ export default class KatalyxCli {
 		//console.log(this.project);
 		await this.initSyncManager({init: true, sync: true, enablePush: false});
 
-		let contentFiles=await this.getContentFiles();
-		for (let contentFile of contentFiles)
-			await this.processContentFile(contentFile);
-
-		await this.saveContentFiles(contentFiles);
-
-
-		//let contentFiles=await this.getContentFiles();
-		//console.log(contentFiles);
-
-
-		//await this.syncContent();
-	}
-
-	async processContentFile(contentFile) {
-		//console.log("process: ",contentFile);
-		let fn=path.join(this.cwd,"public",contentFile.name);
-
-		switch (getContentFileAction(contentFile)) {
-			case "download":
-				console.log("Download: "+contentFile.name);
-				if (!fs.existsSync(path.join(this.cwd,"public")))
-					fs.mkdirSync(path.join(this.cwd,"public"));
-
-				let url=urlJoin(this.url,"admin/_content",contentFile.remoteFile);
-				await downloadFile(url,fn,{fs});
-
-				contentFile.syncFile=contentFile.remoteFile;
-				contentFile.file=contentFile.remoteFile;
-				contentFile.syncHash=await getFileHash(fn,{fs});
-				return contentFile;
-				break;
-
-			case "upload":
-				
-				break;
-
-			case "delete":
-				console.log("Delete: "+contentFile.name);
-				if (fs.existsSync(fn))
-					fs.rmSync(fn);
-
-				return;
-				break;
-		}
-
-		return contentFile;
+		await this.processContentFiles(["download"]);
 	}
 
 	async pull({resolve}) {
@@ -200,20 +154,7 @@ export default class KatalyxCli {
 		this.project=JSON.parse(fs.readFileSync(projectJsonFn));
 		await this.initSyncManager({init: false, sync: true, enablePush: false});
 
-		let contentFiles=await this.getContentFiles();
-		let newContentFiles=[];
-		for (let contentFile of contentFiles) {
-			let action=getContentFileAction(contentFile)
-			//console.log("action: "+action);
-			if (["download","delete"].includes(action))
-				contentFile=await this.processContentFile(contentFile);
-
-			if (contentFile)
-				newContentFiles.push(contentFile);
-		}
-
-		await this.saveContentFiles(newContentFiles);
-
+		await this.processContentFiles(["download","delete"]);
 	}
 
 	async sync({resolve}) {
@@ -222,7 +163,9 @@ export default class KatalyxCli {
 
 		let projectJsonFn=path.join(this.cwd,".katalyx/project.json");
 		this.project=JSON.parse(fs.readFileSync(projectJsonFn));
-		await this.initSyncManager({init: false, sync: true, enablePush: true});
+		await this.initSyncManager({init: false, sync: true, enablePush: false});
+		await this.processContentFiles(["download","delete","upload"]);
+		await this.syncManager.sync({enablePush: true});
 	}
 
 	async status() {
@@ -231,7 +174,7 @@ export default class KatalyxCli {
 
 		let projectJsonFn=path.join(this.cwd,".katalyx/project.json");
 		this.project=JSON.parse(fs.readFileSync(projectJsonFn));
-		await this.initSyncManager({init: false, sync: false});
+		await this.initSyncManager({init: false, sync: false, enablePush: false});
 
 		let local=this.syncManager.local.getValue();
 		let remote=this.syncManager.remote.getValue();
@@ -374,6 +317,59 @@ export default class KatalyxCli {
 	async close() {
 		if (this.syncManager)
 			await this.syncManager.close();
+	}
+
+	async processContentFiles(actions) {
+		let contentFiles=await this.getContentFiles();
+		let newContentFiles=[];
+		for (let contentFile of contentFiles) {
+			let action=getContentFileAction(contentFile)
+			if (actions.includes(action))
+				contentFile=await this.processContentFile(contentFile);
+
+			if (contentFile)
+				newContentFiles.push(contentFile);
+		}
+
+		await this.saveContentFiles(newContentFiles);
+	}
+
+	async processContentFile(contentFile) {
+		//console.log("process: ",contentFile);
+		let fn=path.join(this.cwd,"public",contentFile.name);
+
+		switch (getContentFileAction(contentFile)) {
+			case "download":
+				console.log("Download: "+contentFile.name);
+				if (!fs.existsSync(path.join(this.cwd,"public")))
+					fs.mkdirSync(path.join(this.cwd,"public"));
+
+				let url=urlJoin(this.url,"admin/_content",contentFile.remoteFile);
+				await downloadFile(url,fn,{fs});
+
+				contentFile.syncFile=contentFile.remoteFile;
+				contentFile.file=contentFile.remoteFile;
+				contentFile.syncHash=await getFileHash(fn,{fs});
+				return contentFile;
+				break;
+
+			case "upload":
+				console.log("Upload: "+contentFile.name);
+				contentFile.file=await this.qm.uploadFile(await getFileObject(fn,{fs}));
+				contentFile.syncFile=contentFile.file;
+				contentFile.syncHash=await getFileHash(fn,{fs});
+				break;
+
+			case "delete":
+				console.log("Delete: "+contentFile.name);
+				if (fs.existsSync(fn))
+					fs.rmSync(fn);
+
+				return;
+				break;
+		}
+
+		return contentFile;
 	}
 
 	async saveContentFiles(contentFiles) {

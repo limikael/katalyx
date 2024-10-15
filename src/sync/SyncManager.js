@@ -27,8 +27,11 @@ export default class SyncManager extends EventTarget {
 		return this.syncDebounce.getState();
 	}
 
-	async sync() {
-		console.log("Syncing...");
+	async sync({enablePush}={}) {
+		if (enablePush===undefined)
+			enablePush=this.enablePush;
+
+		console.log("Syncing, push="+enablePush);
 
 		do {
 			if (this.needPull) {
@@ -47,7 +50,7 @@ export default class SyncManager extends EventTarget {
 			}
 
 			let localValue=this.local.getValue();
-			if (this.enablePush &&
+			if (enablePush &&
 					!this.compare(localValue,this.ancestor.getValue())) {
 				console.log("Local changes, pushing...");
 				//console.log(localValue);
