@@ -47,7 +47,7 @@ export default class KatalyxCli {
 			headers: headers
 		});
 
-		this.ignore=[
+		/*this.ignore=[
 			"node_modules",
 			".*",
 			"yarn.lock",
@@ -56,7 +56,7 @@ export default class KatalyxCli {
 			"katnip.local.json",
 			"upload",
 			"*.db",
-		];
+		];*/
 	}
 
 	getCredentialsPathname() {
@@ -259,10 +259,25 @@ export default class KatalyxCli {
 	}
 
 	async initSyncManager({init, sync, enablePush}) {
+		let ignore=[
+			"node_modules",
+			".target",
+			".tmp",
+			".katalyx",
+			"**/*.js.bundle",
+			"public",
+			"upload",
+			"*.db",
+			"katnip.local.json",
+			"yarn.lock",
+			".gitignore",
+			".git"
+		];
+
 		let local=new LocalFileTreeValue({
 			fs: this.fs,
 			cwd: this.cwd,
-			ignore: ["node_modules",".target",".tmp",".katalyx","**/*.js.bundle","public","upload"]
+			ignore: ignore
 		});
 
 		let contentManifestPath=path.join(this.cwd,".katalyx/content_manifest.json");
@@ -407,11 +422,14 @@ export default class KatalyxCli {
 		let publicPath=path.join(this.cwd,"public");
 		if (fs.existsSync(publicPath)) {
 			for (let localName of fs.readdirSync(publicPath)) {
-				if (!contentFiles[localName])
-					contentFiles[localName]={name: localName};
+				if (!localName.endsWith(".js") &&
+						!localName.endsWith(".css")) {
+					if (!contentFiles[localName])
+						contentFiles[localName]={name: localName};
 
-				let fn=path.join(this.cwd,"public",localName);
-				contentFiles[localName].hash=await getFileHash(fn,{fs});
+					let fn=path.join(this.cwd,"public",localName);
+					contentFiles[localName].hash=await getFileHash(fn,{fs});
+				}
 			}
 		}
 
