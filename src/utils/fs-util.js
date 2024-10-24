@@ -16,6 +16,16 @@ export async function getFileHash(fn,{fs}) {
 	).join('');
 }
 
+export async function getStringHash(s) {
+	let enc=new TextEncoder();
+	let hashBuffer=await crypto.subtle.digest("SHA-256",enc.encode(s));
+
+	return Array.from(
+	    new Uint8Array(hashBuffer),
+	    (byte) => byte.toString(16).padStart(2, '0')
+	).join('');
+}
+
 export async function downloadFile(url, fn, {fs}) {
 	let response=await fetch(url);
 	if (response.status<200 || response.status>=300)
