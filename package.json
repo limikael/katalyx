@@ -1,8 +1,10 @@
 {
   "name": "katalyx",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "type": "module",
   "license": "MIT",
+  "scripts": {
+  },
   "dependencies": {
     "fullstack-rpc": "^1.0.3",
     "minimatch": "^10.0.1",
