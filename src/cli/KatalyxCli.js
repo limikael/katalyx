@@ -179,25 +179,29 @@ export default class KatalyxCli {
 			ignore: this.projectFileSync.ignore
 		});
 
-		if (!changes.length)
+		if (!changes.length) {
 			console.log("Up-to-date.");
-
-		console.log("Local".padEnd(8)+"Remote".padEnd(8)+"Path");
-		console.log("------------------------");
-
-		function getChangeLabel(changeStatus) {
-			if (!changeStatus)
-				return "";
-
-			return (changeStatus.charAt(0).toUpperCase()+changeStatus.slice(1));
 		}
 
-		for (let change of changes) {
-			console.log(
-				getChangeLabel(change.local).padEnd(8)+
-				getChangeLabel(change.remote).padEnd(8)+
-				change.name
-			);
+
+		else {
+			console.log("Local".padEnd(8)+"Remote".padEnd(8)+"Path");
+			console.log("------------------------");
+
+			function getChangeLabel(changeStatus) {
+				if (!changeStatus)
+					return "";
+
+				return (changeStatus.charAt(0).toUpperCase()+changeStatus.slice(1));
+			}
+
+			for (let change of changes) {
+				console.log(
+					getChangeLabel(change.local).padEnd(8)+
+					getChangeLabel(change.remote).padEnd(8)+
+					change.name
+				);
+			}
 		}
 	}
 
@@ -208,7 +212,10 @@ export default class KatalyxCli {
 			qm: this.qm,
 			project_id: this.project.id,
 			version: this.project.version,
-			ignore: ["node_modules",".target",".tmp",".katalyx","**/*.js.bundle","public/*.js","public/*.css","upload"],
+			ignore: [
+				"node_modules",".target",".tmp",".katalyx","**/*.js.bundle",
+				"public/*.js","public/*.css","upload",".devdb.json"
+			],
 			cwd: this.cwd,
 			contentUrl: urlJoin(this.url,"admin/_content")
 		});
