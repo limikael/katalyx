@@ -1,9 +1,13 @@
 {
   "name": "katalyx",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "type": "module",
   "license": "MIT",
+  "bin": {
+    "katalyx": "src/main/katalyx-cli.js"
+  },
   "scripts": {
+    "test": "jasmine"
   },
   "dependencies": {
     "fullstack-rpc": "^1.0.3",
@@ -17,6 +21,9 @@
     "serve-fetch": "^1.0.3",
     "url-join": "^5.0.0",
     "yargs": "^17.7.2"
+  },
+  "exports": {
+    ".": "./src/main/exports.js"
   },
   "devDependencies": {
     "jasmine": "^5.3.0"

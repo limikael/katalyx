@@ -1,6 +1,7 @@
 import RemoteProject from "./RemoteProject.js";
 import path from "path-browserify";
 import {mergeFileTrees, getChangedFiles} from "./merge-util.js";
+import {mkdirParent} from "../utils/fs-util.js";
 
 export default class ProjectFileSync {
 	constructor({fs, rpc, qm, project_id, cwd, ignore, contentUrl, version}) {
@@ -37,6 +38,7 @@ export default class ProjectFileSync {
 		if (bin) {
 			let pushResult=await this.remoteProject.pushBinFile(fn,path.join(this.cwd,fn));
 			if (pushResult) {
+				await mkdirParent(path.join(this.cwd,".katalyx/ancestor",fn),{fs: this.fs});
 				await this.fs.promises.cp(
 					path.join(this.cwd,fn),
 					path.join(this.cwd,".katalyx/ancestor",fn)
@@ -50,29 +52,37 @@ export default class ProjectFileSync {
 			let content=await this.fs.promises.readFile(path.join(this.cwd,fn),"utf8");
 			let pushResult=await this.remoteProject.pushFile(fn,content);
 
-			if (pushResult)
+			if (pushResult) {
+				await mkdirParent(path.join(this.cwd,".katalyx/ancestor",fn),{fs: this.fs});
 				await this.fs.promises.writeFile(path.join(this.cwd,".katalyx/ancestor",fn),content);
+			}
 
 			return pushResult;
 		}
 	}
 
-	async sync({pull, push}={}) {
+	async sync({pull, push, log}={}) {
 		//console.log("syncing files");
 		//let ignore=["node_modules",".target",".tmp",".katalyx","**/*.js.bundle","public/*.css","public/*.js"];
 		//let ignore=["node_modules",".target",".tmp",".katalyx","**/*.js.bundle"];
 
-		await this.fs.promises.mkdir(path.join(this.cwd,".katalyx/ancestor"),{recursive: true});
+		if (!log)
+			log=()=>{};
 
 		do {
 			if (pull || this.needPull) {
 				//console.log("pulling...");
 				await this.remoteProject.pull();
 
+				let ancestorDir=path.join(this.cwd,".katalyx/ancestor");
+				if (!this.fs.existsSync(ancestorDir))
+					await this.fs.promises.mkdir(ancestorDir);
+
 				//console.log("merging...");
 				await mergeFileTrees({
+					log: log,
 					local: this.cwd,
-					ancestor: path.join(this.cwd,".katalyx/ancestor"),
+					ancestor: ancestorDir,
 					remote: path.join(this.cwd,".katalyx/remote"),
 					resolve: "remote",
 					ignore: this.ignore,
@@ -100,20 +110,22 @@ export default class ProjectFileSync {
 						changes.delete.length ||
 						changes.new.length) {
 					for (let pushFn of [...changes.new,...changes.changed]) {
+						log("Pushing file: "+pushFn);
 						if (!await this.pushFile(pushFn)) {
-							console.log("need to pull again");
+							log("Need to pull again...");
 							this.needPull=true;
 						}
 					}
 
 					for (let deleteFn of changes.delete) {
+						log("Pushing delete: "+deleteFn);
 						await this.remoteProject.deleteFile(deleteFn);
 						await this.fs.promises.rm(path.join(this.cwd,".katalyx/ancestor",deleteFn));
 					}
 
 					if (!this.needPull) {
 						this.version=await this.rpc.incProjectVersion({project_id: this.project_id});
-						console.log("pushed version: "+this.version);
+						log("Pushed version: "+this.version);
 					}
 				}
 			}

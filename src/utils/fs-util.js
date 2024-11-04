@@ -33,3 +33,9 @@ export async function downloadFile(url, fn, {fs}) {
 
 	await fs.promises.writeFile(fn,new Uint8Array(await response.arrayBuffer()));
 }
+
+export async function mkdirParent(fn, {fs}) {
+	//console.log("mkdir: "+path.dirname(fn));
+	if (!fs.existsSync(path.dirname(fn)))
+		await fs.promises.mkdir(path.dirname(fn),{recursive: true});
+}

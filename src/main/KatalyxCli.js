@@ -7,7 +7,7 @@ import {QuickminApi} from "quickmin-api";
 import {createNodeRequestListener} from "serve-fetch";
 import {getUserPrefsDir} from "../utils/node-util.js";
 import {getFileHash, downloadFile, getFileObject} from "../utils/fs-util.js";
-import {getFileTreeChanges} from "../collab/merge-util.js";
+import {diffFileTrees} from "../collab/merge-util.js";
 import ProjectFileSync from "../collab/ProjectFileSync.js";
 import http from "http";
 import util from "util";
@@ -45,6 +45,10 @@ export default class KatalyxCli {
 			url: urlJoin(url,"rpc"),
 			headers: headers
 		});
+	}
+
+	log=(message)=>{
+		console.log(message);
 	}
 
 	getCredentialsPathname() {
@@ -130,7 +134,7 @@ export default class KatalyxCli {
 		fs.writeFileSync(projectJsonFn,JSON.stringify(this.project,null,2));
 
 		this.initProjectFileSync();
-		await this.projectFileSync.sync({pull: true});
+		await this.projectFileSync.sync({pull: true, log: this.log});
 
 		console.log("Cloned Version: "+this.project.version);
 	}
@@ -143,9 +147,9 @@ export default class KatalyxCli {
 		this.project=JSON.parse(fs.readFileSync(projectJsonFn));
 
 		this.initProjectFileSync();
-		await this.projectFileSync.sync({pull: true});
+		await this.projectFileSync.sync({pull: true, log: this.log});
 
-		console.log("Project Updated...");
+		//console.log("Project Updated...");
 	}
 
 	async sync({resolve}) {
@@ -156,9 +160,9 @@ export default class KatalyxCli {
 		this.project=JSON.parse(fs.readFileSync(projectJsonFn));
 
 		this.initProjectFileSync();
-		await this.projectFileSync.sync({pull: true, push: true});
+		await this.projectFileSync.sync({pull: true, push: true, log: this.log});
 
-		console.log("Project Synced...");
+		//console.log("Project Synced...");
 	}
 
 	async status() {
@@ -171,7 +175,7 @@ export default class KatalyxCli {
 		this.initProjectFileSync();
 		await this.projectFileSync.remoteProject.pull();
 
-		let changes=await getFileTreeChanges({
+		let changes=await diffFileTrees({
 			local: this.cwd,
 			remote: path.join(this.cwd,".katalyx/remote"),
 			ancestor: path.join(this.cwd,".katalyx/ancestor"),
@@ -179,10 +183,11 @@ export default class KatalyxCli {
 			ignore: this.projectFileSync.ignore
 		});
 
+		changes=changes.filter(diffState=>diffState.local||diffState.remote);
+
 		if (!changes.length) {
 			console.log("Up-to-date.");
 		}
-
 
 		else {
 			console.log("Local".padEnd(8)+"Remote".padEnd(8)+"Path");

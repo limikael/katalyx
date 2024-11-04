@@ -1,5 +1,5 @@
 import path from "path-browserify";
-import {getStringHash, getFileHash, downloadFile, getFileObject} from "../utils/fs-util.js";
+import {getStringHash, getFileHash, downloadFile, getFileObject, mkdirParent} from "../utils/fs-util.js";
 import urlJoin from "url-join";
 import {findFiles} from "../utils/dir-util.js";
 import {arrayDifference} from "../utils/js-util.js";
@@ -25,8 +25,7 @@ export default class RemoteProject {
 			targetFileNames.push(file.name);
 
 			let fullFn=path.join(this.remoteCwd,file.name);
-			if (!this.fs.existsSync(path.dirname(fullFn)))
-				await this.fs.promises.mkdir(path.dirname(fullFn));
+			await mkdirParent(fullFn,{fs: this.fs});
 
 			if (file.file) {
 				let needDownload=true;
@@ -55,7 +54,7 @@ export default class RemoteProject {
 	}
 
 	async pushBinFile(fn, sourceFn) {
-		let fileObject=await getFileObject(sourceFn,{fs:this.fs});
+		let fileObject=await getFileObject(sourceFn,{fs: this.fs});
 		let fileId=await this.qm.uploadFile(fileObject);
 
 		let res=await this.rpc.setProjectBinFile({
@@ -68,6 +67,7 @@ export default class RemoteProject {
 		if (!res)
 			return false;
 
+		await mkdirParent(path.join(this.remoteCwd,fn),{fs: this.fs});
 		await fs.promises.cp(
 			sourceFn,
 			path.join(this.remoteCwd,fn)
@@ -94,6 +94,7 @@ export default class RemoteProject {
 		if (!res)
 			return false;
 
+		await mkdirParent(fullFn,{fs: this.fs});
 		await this.fs.promises.writeFile(fullFn,content);
 		return true;
 	}

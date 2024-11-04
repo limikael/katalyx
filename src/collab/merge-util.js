@@ -1,6 +1,6 @@
 import {diff3Merge} from 'node-diff3';
 import {arrayUnique, arrayDifference, arrayIntersection} from "../utils/js-util.js";
-import {getFileHash} from "../utils/fs-util.js";
+import {getFileHash, mkdirParent} from "../utils/fs-util.js";
 import {findFiles} from "../utils/dir-util.js";
 import path from "path-browserify";
 
@@ -24,103 +24,82 @@ export async function getChangedFiles({source, target, ignore, fs}) {
 	return res;
 }
 
-export async function getFileTreeChanges({local, ancestor, remote, ignore, fs}) {
-	let localNames=await findFiles(local,{ignore, fs});
-	let remoteNames=await findFiles(remote,{ignore, fs});
-	let ancestorNames=await findFiles(ancestor,{ignore, fs});
-
-	//console.log("ignore",ignore);
-	//console.log(remoteNames);
-
-	let allNames=arrayUnique([
-		...localNames,
-		...remoteNames,
-		...ancestorNames,
-	]);
-
-	let res=[];
-	for (let name of allNames) {
-		let change=await getFileChange({local, ancestor, remote, name, fs});
-		if (change) {
-			res.push({
-				name: name,
-				...change
-			});
-		}
-	}
-
-	return res;
-}
-
-export async function getFileChange({local, ancestor, remote, name, fs}) {
+export async function getDiffState({local, ancestor, remote, name, fs}) {
 	let fileState=
 		(fs.existsSync(path.join(local,name))?"l":"-")+
 		(fs.existsSync(path.join(ancestor,name))?"a":"-")+
 		(fs.existsSync(path.join(remote,name))?"r":"-");
 
+	let diffState={
+		name: name,
+		state: fileState
+	};
+
+	if (fs.existsSync(path.join(local,name)))
+		diffState.localHash=await getFileHash(path.join(local,name),{fs:fs});
+
+	if (fs.existsSync(path.join(ancestor,name)))
+		diffState.ancestorHash=await getFileHash(path.join(ancestor,name),{fs:fs});
+
+	if (fs.existsSync(path.join(remote,name)))
+		diffState.remoteHash=await getFileHash(path.join(remote,name),{fs:fs});
+
 	switch (fileState) {
 		// Remote create.
 		case "--r":
-			return ({remote: "new"});
+			diffState.remote="new";
 			break;
 
 		// Local create.
 		case "l--":
-			return ({local: "new"});
+			diffState.local="new";
 			break;
 
 		// Deleted remote and local.
 		case "-a-":
-			return ({local: "delete", remote: "delete"});
+			diffState.local="delete";
+			diffState.remote="delete";
 			break;
 
 		// Local delete.
 		case "-ar":
-			return ({local: "delete"});
+			diffState.local="delete";
 			break;
 
 		// Remote delete.
 		case "la-":
-			return ({remote: "delete"});
+			diffState.remote="delete";
 			break;
 
 		// Created in both places.
 		case "l-r":
-			return ({remote: "new", local: "new"});
+			diffState.local="new";
+			diffState.remote="new";
 			break;
 
 		// Exists everywhere.
 		case "lar":
-			let localHash=await getFileHash(path.join(local,name),{fs:fs});
-			let ancestorHash=await getFileHash(path.join(ancestor,name),{fs:fs});
-			let remoteHash=await getFileHash(path.join(remote,name),{fs:fs});
+			if (diffState.localHash!=diffState.ancestorHash)
+				diffState.local="change";
 
-			if (localHash==ancestorHash &&
-					remoteHash==ancestorHash)
-				return;
+			if (diffState.remoteHash!=diffState.ancestorHash)
+				diffState.remote="change";
 
-			let res={};
-			if (localHash!=ancestorHash)
-				res.local="change";
-
-			if (remoteHash!=ancestorHash)
-				res.remote="change";
-
-			return res;
 			break;
 
 		default:
 			throw new Error("Unknown file state");
 	}
+
+	return diffState;
 }
 
 export async function diffFileTrees({local, ancestor, remote, ignore, fs}) {
+	//console.log("diff file trees");
 	let localNames=await findFiles(local,{ignore, fs});
 	let remoteNames=await findFiles(remote,{ignore, fs});
 	let ancestorNames=await findFiles(ancestor,{ignore, fs});
-
-	//console.log("ignore",ignore);
-	//console.log(remoteNames);
+	//console.log("read files...");
 
 	let allNames=arrayUnique([
 		...localNames,
@@ -129,32 +108,19 @@ export async function diffFileTrees({local, ancestor, remote, ignore, fs}) {
 	]);
 
 	let res=[];
-	for (let name of allNames) {
-		let fileState=
-			(fs.existsSync(path.join(local,name))?"l":"-")+
-			(fs.existsSync(path.join(ancestor,name))?"a":"-")+
-			(fs.existsSync(path.join(remote,name))?"r":"-");
-
-		res.push({
-			name: name,
-			state: fileState
-		});
-	}
+	for (let name of allNames)
+		res.push(await getDiffState({local, ancestor, remote, name, fs}));
 
 	return res;
 }
 
-async function copyWithMkdir(from, to, {fs}) {
-	if (!fs.existsSync(path.dirname(to)))
-		await fs.promises.mkdir(path.dirname(to));
-
-	await fs.promises.cp(from,to);
-}
-
 // After the op, local=merged, ancestor=remote
-export async function mergeFileTrees({local, ancestor, remote, resolve, ignore, fs, strategies}) {
+export async function mergeFileTrees({local, ancestor, remote, resolve, ignore, fs, strategies, log}) {
 	if (!strategies)
 		strategies={};
+
+	if (!log)
+		log=()=>{};
 
 	async function mergeFile(name) {
 		let strategy="text";
@@ -176,17 +142,22 @@ export async function mergeFileTrees({local, ancestor, remote, resolve, ignore, 
 		}
 	}
 
-	let fileStates=await diffFileTrees({local, ancestor, remote, ignore, fs});
-	for (let fileState of fileStates) {
-		let name=fileState.name;
+	let diffStates=await diffFileTrees({local, ancestor, remote, ignore, fs});
+	for (let diffState of diffStates) {
+		let name=diffState.name;
 		//console.log("merge file: "+name);
 
-		switch (fileState.state) {
+		switch (diffState.state) {
 
 			// Remote create.
 			case "--r":
-				await copyWithMkdir(path.join(remote,name),path.join(ancestor,name),{fs});
-				await copyWithMkdir(path.join(remote,name),path.join(local,name),{fs});
+				log("New remote: "+name);
+
+				await mkdirParent(path.join(ancestor,name),{fs:fs});
+				await fs.promises.cp(path.join(remote,name),path.join(ancestor,name));
+
+				await mkdirParent(path.join(local,name),{fs:fs});
+				await fs.promises.cp(path.join(remote,name),path.join(local,name));
 				break;
 
 			// Local create.
@@ -195,6 +166,8 @@ export async function mergeFileTrees({local, ancestor, remote, resolve, ignore, 
 
 			// Deleted remote and local.
 			case "-a-":
+				log("Delete: "+name);
+
 				await fs.promises.rm(path.join(ancestor,name));
 				break;
 
@@ -204,20 +177,28 @@ export async function mergeFileTrees({local, ancestor, remote, resolve, ignore, 
 
 			// Remote delete.
 			case "la-":
+				log("Delete: "+name);
+
 				await fs.promises.rm(path.join(local,name));
 				await fs.promises.rm(path.join(ancestor,name));
 				break;
 
 			// Created in both places.
 			case "l-r":
+				log("New: "+name);
+
 				switch (resolve) {
 					case "local":
-						await copyWithMkdir(path.join(remote,name),path.join(ancestor,name),{fs});
+						await mkdirParent(path.join(ancestor,name),{fs:fs});
+						await fs.promises.cp(path.join(remote,name),path.join(ancestor,name));
 						break;
 
 					case "remote":
-						await copyWithMkdir(path.join(remote,name),path.join(ancestor,name),{fs});
-						await copyWithMkdir(path.join(remote,name),path.join(local,name),{fs});
+						await mkdirParent(path.join(ancestor,name),{fs:fs});
+						await fs.promises.cp(path.join(remote,name),path.join(ancestor,name));
+
+						await mkdirParent(path.join(local,name),{fs:fs});
+						await fs.promises.cp(path.join(remote,name),path.join(local,name));
 						break;
 
 					default:
@@ -227,7 +208,11 @@ export async function mergeFileTrees({local, ancestor, remote, resolve, ignore, 
 
 			// Exists everywhere.
 			case "lar":
-				await mergeFile(name);
+				if (diffState.local || diffState.remote) {
+					log("Merge: "+name);
+					await mergeFile(name);
+				}
+
 				break;
 
 			default:
