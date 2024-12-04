@@ -82,12 +82,10 @@ export default class RemoteProject {
 		if (this.fs.existsSync(fullFn))
 			oldHash=await getFileHash(fullFn,{fs:this.fs});
 
-		let newHash=await getStringHash(content);
 		let res=await this.rpc.setProjectFile({
 			project_id: this.project_id,
 			name: fn,
 			content: content,
-			newHash: newHash,
 			oldHash: oldHash
 		});
 
