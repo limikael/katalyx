@@ -1,7 +1,7 @@
 import {diff3Merge} from 'node-diff3';
 import {arrayUnique, arrayDifference, arrayIntersection} from "../utils/js-util.js";
 import {getFileHash, mkdirParent} from "../utils/fs-util.js";
-import {findFiles} from "../utils/dir-util.js";
+import {findFiles, minimatchAny} from "../utils/dir-util.js";
 import path from "path-browserify";
 
 export async function getChangedFiles({source, target, ignore, fs}) {
@@ -115,30 +115,19 @@ export async function diffFileTrees({local, ancestor, remote, ignore, fs}) {
 }
 
 // After the op, local=merged, ancestor=remote
-export async function mergeFileTrees({local, ancestor, remote, resolve, ignore, fs, strategies, log}) {
-	if (!strategies)
-		strategies={};
-
+export async function mergeFileTrees({local, ancestor, remote, resolve, ignore, fs, binPatterns, log}) {
 	if (!log)
 		log=()=>{};
 
 	async function mergeFile(name) {
-		let strategy="text";
-		for (let k in strategies)
-			if (name.endsWith(k))
-				strategy=strategies[k];
+		if (minimatchAny(name,binPatterns)) {
+			//console.log("bin: "+name);
+			await mergeBinFile({local, ancestor, remote, resolve, name, fs});
+		}
 
-		switch (strategy) {
-			case "text":
-				await mergeTextFile({local, ancestor, remote, resolve, name, fs});
-				break;
-
-			case "bin":
-				await mergeBinFile({local, ancestor, remote, resolve, name, fs});
-				break;
-
-			default:
-				throw new Error("unknown merge strategy: "+strategy);
+		else {
+			//console.log("text: "+name);
+			await mergeTextFile({local, ancestor, remote, resolve, name, fs});
 		}
 	}
 

@@ -2,6 +2,7 @@ import RemoteProject from "./RemoteProject.js";
 import path from "path-browserify";
 import {mergeFileTrees, getChangedFiles} from "./merge-util.js";
 import {mkdirParent} from "../utils/fs-util.js";
+import {minimatchAny} from "../utils/dir-util.js";
 
 export default class ProjectFileSync {
 	constructor({fs, rpc, qm, project_id, cwd, ignore, contentUrl, version}) {
@@ -14,9 +15,7 @@ export default class ProjectFileSync {
 		this.contentUrl=contentUrl;
 		this.qm=qm;
 
-		this.binaryExtensions=[".jpg",".png",".gif"];
-
-		//console.log("init file sync, version="+this.version);
+		this.binPatterns=["public/**","upload/**"];
 
 		this.remoteProject=new RemoteProject({
 			fs: this.fs,
@@ -30,11 +29,7 @@ export default class ProjectFileSync {
 	}
 
 	async pushFile(fn) {
-		let bin;
-		for (let ext of this.binaryExtensions)
-			if (fn.endsWith(ext))
-				bin=true;
-
+		let bin=minimatchAny(fn,this.binPatterns);
 		if (bin) {
 			let pushResult=await this.remoteProject.pushBinFile(fn,path.join(this.cwd,fn));
 			if (pushResult) {
@@ -87,11 +82,7 @@ export default class ProjectFileSync {
 					resolve: "remote",
 					ignore: this.ignore,
 					fs: this.fs,
-					strategies: {
-						".jpg": "bin",
-						".png": "bin",
-						".gif": "bin"
-					}
+					binPatterns: this.binPatterns,
 				});
 
 				this.needPull=false;

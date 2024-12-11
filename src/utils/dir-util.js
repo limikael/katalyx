@@ -2,7 +2,7 @@ import {objectifyArgs, arrayify} from "./js-util.js";
 import path from "path-browserify";
 import {minimatch} from "minimatch";
 
-function minimatchAny(fn, patterns, options={}) {
+export function minimatchAny(fn, patterns, options={}) {
 	patterns=arrayify(patterns);
 
 	if (!patterns)
